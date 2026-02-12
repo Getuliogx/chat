@@ -18,7 +18,7 @@ const wss = new WebSocket.Server({ server });
 // CONFIGURAÇÕES
 // ===============================
 const TWITCH_BOT_USERNAME = 'xyzgx';
-const TWITCH_OAUTH_TOKEN = 'oauth:SEU_TOKEN_AQUI'; // IMPORTANTE: precisa começar com oauth:
+const TWITCH_OAUTH_TOKEN = 'oauth:o731um0ljm4od6av2hp0ohoa1t8v32'; // IMPORTANTE: precisa começar com oauth:
 
 // ===============================
 // ROTAS PARA RENDER / UPTIMEROBOT
@@ -169,3 +169,4 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`Server rodando na porta ${PORT}`);
 });
+
