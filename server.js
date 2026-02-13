@@ -132,24 +132,11 @@ twitchClient.on('message', (channel, tags, message, self) => {
   const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
   if (!channels.has(roomKey)) return;
 
-  // ===== EXTRAINDO BADGES =====
-  let badgesArray = [];
-
-  if (tags.badges) {
-    Object.keys(tags.badges).forEach(badgeName => {
-      badgesArray.push({
-        type: badgeName,
-        version: tags.badges[badgeName]
-      });
-    });
-  }
-
   broadcastToRoom(roomKey, {
     user: tags['display-name'],
     message,
     userId: tags['user-id'],
     msgId: tags.id,
-    badges: badgesArray, // 👈 AGORA ENVIA BADGES
     platform: 'twitch'
   });
 });
