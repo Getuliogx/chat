@@ -20,18 +20,22 @@ const wss = new WebSocket.Server({ server });
 const TWITCH_BOT_USERNAME = 'xyzgx';
 const TWITCH_OAUTH_TOKEN = 'oauth:o731um0ljm4od6av2hp0ohoa1t8v32'; // IMPORTANTE: precisa começar com oauth:
 
+// --- CONFIGURAÇÃO DE BLOQUEIO ---
+const BOTS_TO_IGNORE = ['icarolinabot', 'icarolinaporto']; // Adicione os nomes aqui em minúsculo
+// ---------------------------------
+
 // ===============================
 // ROTAS PARA RENDER / UPTIMEROBOT
 // ===============================
 
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  res.status(200).send('OK');
 });
 
 // Rota principal
 app.get('/', (req, res) => {
-  res.status(200).send('Server is running');
+  res.status(200).send('Server is running');
 });
 
 // ===============================
@@ -45,12 +49,12 @@ const kickConnections = new Map();
 // CLIENT TWITCH (join dinâmico)
 // ===============================
 const twitchClient = new tmi.Client({
-  options: { debug: true },
-  identity: {
-    username: TWITCH_BOT_USERNAME,
-    password: TWITCH_OAUTH_TOKEN
-  },
-  channels: []
+  options: { debug: true },
+  identity: {
+    username: TWITCH_BOT_USERNAME,
+    password: TWITCH_OAUTH_TOKEN
+  },
+  channels: []
 });
 
 twitchClient.connect();
@@ -61,64 +65,64 @@ twitchClient.connect();
 const PING_INTERVAL = 30000;
 
 wss.on('connection', (ws) => {
-  console.log('Novo client conectado');
-  ws.isAlive = true;
-  ws.rooms = new Set();
+  console.log('Novo client conectado');
+  ws.isAlive = true;
+  ws.rooms = new Set();
 
-  ws.on('pong', () => ws.isAlive = true);
+  ws.on('pong', () => ws.isAlive = true);
 
-  ws.on('message', async (message) => {
-    try {
-      const data = JSON.parse(message);
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message);
 
-      if (data.action === 'join') {
-        const { platform, channel } = data;
-        if (!platform || !channel) return;
+      if (data.action === 'join') {
+        const { platform, channel } = data;
+        if (!platform || !channel) return;
 
-        const lowerChannel = channel.toLowerCase();
-        const roomKey = `${platform}-${lowerChannel}`;
+        const lowerChannel = channel.toLowerCase();
+        const roomKey = `${platform}-${lowerChannel}`;
 
-        if (!channels.has(roomKey)) channels.set(roomKey, new Set());
-        channels.get(roomKey).add(ws);
-        ws.rooms.add(roomKey);
+        if (!channels.has(roomKey)) channels.set(roomKey, new Set());
+        channels.get(roomKey).add(ws);
+        ws.rooms.add(roomKey);
 
-        console.log(`Client joined room: ${roomKey}`);
+        console.log(`Client joined room: ${roomKey}`);
 
-        if (platform === 'twitch' && !twitchChannels.has(lowerChannel)) {
-          await twitchClient.join(lowerChannel);
-          twitchChannels.add(lowerChannel);
-          console.log(`Joined Twitch channel: ${lowerChannel}`);
-        }
+        if (platform === 'twitch' && !twitchChannels.has(lowerChannel)) {
+          await twitchClient.join(lowerChannel);
+          twitchChannels.add(lowerChannel);
+          console.log(`Joined Twitch channel: ${lowerChannel}`);
+        }
 
-        ws.send(JSON.stringify({ status: 'joined', room: roomKey }));
-      }
+        ws.send(JSON.stringify({ status: 'joined', room: roomKey }));
+      }
 
-    } catch (error) {
-      console.error('Erro no message:', error);
-    }
-  });
+    } catch (error) {
+      console.error('Erro no message:', error);
+    }
+  });
 
-  ws.on('close', () => {
-    ws.rooms.forEach(room => {
-      if (channels.has(room)) {
-        channels.get(room).delete(ws);
-        if (channels.get(room).size === 0) {
-          channels.delete(room);
-        }
-      }
-    });
-  });
+  ws.on('close', () => {
+    ws.rooms.forEach(room => {
+      if (channels.has(room)) {
+        channels.get(room).delete(ws);
+        if (channels.get(room).size === 0) {
+          channels.delete(room);
+        }
+      }
+    });
+  });
 });
 
 // ===============================
 // PING / PONG
 // ===============================
 const interval = setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
 }, PING_INTERVAL);
 
 server.on('close', () => clearInterval(interval));
@@ -127,38 +131,46 @@ server.on('close', () => clearInterval(interval));
 // TWITCH EVENTS
 // ===============================
 twitchClient.on('message', (channel, tags, message, self) => {
-  if (self) return;
+  if (self) return;
 
-  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
-  if (!channels.has(roomKey)) return;
+  // --- LÓGICA DE BLOQUEIO APLICADA ---
+  const username = tags['display-name'].toLowerCase();
+  if (BOTS_TO_IGNORE.includes(username)) {
+    console.log(`Mensagem ignorada do bot: ${username}`);
+    return; // Não envia para o broadcast
+  }
+  // -----------------------------------
 
-  broadcastToRoom(roomKey, {
-    user: tags['display-name'],
-    message,
-    userId: tags['user-id'],
-    msgId: tags.id,
-    platform: 'twitch'
-  });
+  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
+  if (!channels.has(roomKey)) return;
+
+  broadcastToRoom(roomKey, {
+    user: tags['display-name'],
+    message,
+    userId: tags['user-id'],
+    msgId: tags.id,
+    platform: 'twitch'
+  });
 });
 
 twitchClient.on('deletemessage', (channel, msgid) => {
-  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
-  if (!channels.has(roomKey)) return;
+  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
+  if (!channels.has(roomKey)) return;
 
-  broadcastToRoom(roomKey, { type: 'delete-message', msgId: msgid });
+  broadcastToRoom(roomKey, { type: 'delete-message', msgId: msgid });
 });
 
 // ===============================
 // BROADCAST
 // ===============================
 function broadcastToRoom(roomKey, data) {
-  if (!channels.has(roomKey)) return;
+  if (!channels.has(roomKey)) return;
 
-  channels.get(roomKey).forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
+  channels.get(roomKey).forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
 }
 
 // ===============================
@@ -167,6 +179,5 @@ function broadcastToRoom(roomKey, data) {
 const PORT = process.env.PORT || 8080;
 
 server.listen(PORT, () => {
-  console.log(`Server rodando na porta ${PORT}`);
+  console.log(`Server rodando na porta ${PORT}`);
 });
-
