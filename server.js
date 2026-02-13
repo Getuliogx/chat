@@ -3,182 +3,190 @@
 // Server subscreve dinamicamente e broadcasta mensagens para rooms específicas.
 // Ping/pong para evitar timeouts. Health check para Render.
 // Dependências: ws, express, tmi.js, axios
-
 const WebSocket = require('ws');
 const express = require('express');
 const http = require('http');
 const tmi = require('tmi.js');
 const axios = require('axios');
-
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-
 // ===============================
 // CONFIGURAÇÕES
 // ===============================
 const TWITCH_BOT_USERNAME = 'xyzgx';
 const TWITCH_OAUTH_TOKEN = 'oauth:o731um0ljm4od6av2hp0ohoa1t8v32'; // IMPORTANTE: precisa começar com oauth:
-
 // --- CONFIGURAÇÃO DE BLOQUEIO ---
 const BOTS_TO_IGNORE = ['icarolinabot', 'icarolinaporto', 'streamelements']; // Adicione os nomes aqui em minúsculo
 // ---------------------------------
-
 // ===============================
 // ROTAS PARA RENDER / UPTIMEROBOT
 // ===============================
-
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  res.status(200).send('OK');
 });
-
 // Rota principal
 app.get('/', (req, res) => {
-  res.status(200).send('Server is running');
+  res.status(200).send('Server is running');
 });
-
 // ===============================
 // MAPAS DE CONTROLE
 // ===============================
 const channels = new Map();
 const twitchChannels = new Set();
-const kickConnections = new Map();
-
+const kickConnections = new Map(); // Novo: Para conexões Kick multi-canal
 // ===============================
 // CLIENT TWITCH (join dinâmico)
 // ===============================
 const twitchClient = new tmi.Client({
-  options: { debug: true },
-  identity: {
-    username: TWITCH_BOT_USERNAME,
-    password: TWITCH_OAUTH_TOKEN
-  },
-  channels: []
+  options: { debug: true },
+  identity: {
+    username: TWITCH_BOT_USERNAME,
+    password: TWITCH_OAUTH_TOKEN
+  },
+  channels: []
 });
-
 twitchClient.connect();
-
 // ===============================
 // WEBSOCKET
 // ===============================
 const PING_INTERVAL = 30000;
-
 wss.on('connection', (ws) => {
-  console.log('Novo client conectado');
-  ws.isAlive = true;
-  ws.rooms = new Set();
-
-  ws.on('pong', () => ws.isAlive = true);
-
-  ws.on('message', async (message) => {
-    try {
-      const data = JSON.parse(message);
-
-      if (data.action === 'join') {
-        const { platform, channel } = data;
-        if (!platform || !channel) return;
-
-        const lowerChannel = channel.toLowerCase();
-        const roomKey = `${platform}-${lowerChannel}`;
-
-        if (!channels.has(roomKey)) channels.set(roomKey, new Set());
-        channels.get(roomKey).add(ws);
-        ws.rooms.add(roomKey);
-
-        console.log(`Client joined room: ${roomKey}`);
-
-        if (platform === 'twitch' && !twitchChannels.has(lowerChannel)) {
-          await twitchClient.join(lowerChannel);
-          twitchChannels.add(lowerChannel);
-          console.log(`Joined Twitch channel: ${lowerChannel}`);
-        }
-
-        ws.send(JSON.stringify({ status: 'joined', room: roomKey }));
-      }
-
-    } catch (error) {
-      console.error('Erro no message:', error);
-    }
-  });
-
-  ws.on('close', () => {
-    ws.rooms.forEach(room => {
-      if (channels.has(room)) {
-        channels.get(room).delete(ws);
-        if (channels.get(room).size === 0) {
-          channels.delete(room);
-        }
-      }
-    });
-  });
+  console.log('Novo client conectado');
+  ws.isAlive = true;
+  ws.rooms = new Set();
+  ws.on('pong', () => ws.isAlive = true);
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.action === 'join') {
+        const { platform, channel } = data;
+        if (!platform || !channel) return;
+        const lowerChannel = channel.toLowerCase();
+        const roomKey = `${platform}-${lowerChannel}`;
+        if (!channels.has(roomKey)) channels.set(roomKey, new Set());
+        channels.get(roomKey).add(ws);
+        ws.rooms.add(roomKey);
+        console.log(`Client joined room: ${roomKey}`);
+        if (platform === 'twitch' && !twitchChannels.has(lowerChannel)) {
+          await twitchClient.join(lowerChannel);
+          twitchChannels.add(lowerChannel);
+          console.log(`Joined Twitch channel: ${lowerChannel}`);
+        } else if (platform === 'kick' && !kickConnections.has(lowerChannel)) {
+          // Fetch chatroom ID para Kick
+          const response = await axios.get(`https://mrboostlive.com/kick/api/?channel=${lowerChannel}`);
+          const chatroomId = response.data.chatroom.id;
+          const userId = response.data.id;
+          // Connect WS para esse Kick channel
+          const kickWs = new WebSocket("wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=7.6.0&flash=false");
+          kickWs.onopen = () => {
+            kickWs.send(JSON.stringify({ event: "pusher:subscribe", data: { auth: "", channel: `chatrooms.${chatroomId}.v2` } }));
+            kickWs.send(JSON.stringify({ event: "pusher:subscribe", data: { auth: "", channel: `channel.${userId}` } }));
+            console.log(`Joined Kick channel: ${lowerChannel}`);
+          };
+          kickWs.onmessage = (ev) => handleKickMessage(ev, lowerChannel);
+          kickWs.onclose = () => {
+            console.log(`Kick WS closed for ${lowerChannel}, reconnecting...`);
+            setTimeout(() => joinKickChannel(lowerChannel), 1000);
+          };
+          kickConnections.set(lowerChannel, kickWs);
+        }
+        ws.send(JSON.stringify({ status: 'joined', room: roomKey }));
+      }
+    } catch (error) {
+      console.error('Erro no message:', error);
+    }
+  });
+  ws.on('close', () => {
+    ws.rooms.forEach(room => {
+      if (channels.has(room)) {
+        channels.get(room).delete(ws);
+        if (channels.get(room).size === 0) channels.delete(room);
+      }
+    });
+  });
 });
-
 // ===============================
 // PING / PONG
 // ===============================
 const interval = setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
 }, PING_INTERVAL);
-
 server.on('close', () => clearInterval(interval));
-
 // ===============================
 // TWITCH EVENTS
 // ===============================
 twitchClient.on('message', (channel, tags, message, self) => {
-  if (self) return;
-
-  // --- LÓGICA DE BLOQUEIO APLICADA ---
-  const username = tags['display-name'].toLowerCase();
+  if (self) return;
+  const username = (tags['display-name'] || '').toLowerCase();
   if (BOTS_TO_IGNORE.includes(username)) {
     console.log(`Mensagem ignorada do bot: ${username}`);
     return; // Não envia para o broadcast
   }
-  // -----------------------------------
-
-  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
-  if (!channels.has(roomKey)) return;
-
-  broadcastToRoom(roomKey, {
-    user: tags['display-name'],
-    message,
-    userId: tags['user-id'],
-    msgId: tags.id,
-    platform: 'twitch'
-  });
+  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
+  if (!channels.has(roomKey)) return;
+  broadcastToRoom(roomKey, {
+    user: tags['display-name'],
+    message,
+    userId: tags['user-id'],
+    msgId: tags.id,
+    platform: 'twitch'
+  });
 });
-
 twitchClient.on('deletemessage', (channel, msgid) => {
-  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
-  if (!channels.has(roomKey)) return;
-
-  broadcastToRoom(roomKey, { type: 'delete-message', msgId: msgid });
+  const roomKey = `twitch-${channel.replace('#','').toLowerCase()}`;
+  if (!channels.has(roomKey)) return;
+  broadcastToRoom(roomKey, { type: 'delete-message', msgId: msgid });
 });
-
+// ===============================
+// KICK EVENTS
+// ===============================
+function handleKickMessage(event, channel) {
+  try {
+    const jsonData = JSON.parse(event.data);
+    const jsonDataSub = JSON.parse(jsonData.data);
+    const roomKey = `kick-${channel.toLowerCase()}`;
+    if (!channels.has(roomKey)) return;
+    if (jsonData.event === "App\\Events\\MessageDeletedEvent") {
+      broadcastToRoom(roomKey, { type: 'delete-message', msgId: jsonDataSub.message.id });
+      return;
+    }
+    const username = (jsonDataSub.sender.username || '').toLowerCase();
+    if (BOTS_TO_IGNORE.includes(username)) {
+      console.log(`Mensagem ignorada do bot no Kick: ${username}`);
+      return; // Não envia para o broadcast
+    }
+    broadcastToRoom(roomKey, {
+      user: jsonDataSub.sender.username,
+      message: jsonDataSub.content,
+      userId: jsonDataSub.sender.id,
+      msgId: jsonDataSub.id,
+      platform: 'kick'
+    });
+  } catch (e) {
+    console.error('Erro no Kick message:', e);
+  }
+}
 // ===============================
 // BROADCAST
 // ===============================
 function broadcastToRoom(roomKey, data) {
-  if (!channels.has(roomKey)) return;
-
-  channels.get(roomKey).forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
+  if (!channels.has(roomKey)) return;
+  channels.get(roomKey).forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
 }
-
 // ===============================
 // PORTA
 // ===============================
 const PORT = process.env.PORT || 8080;
-
 server.listen(PORT, () => {
-  console.log(`Server rodando na porta ${PORT}`);
+  console.log(`Server rodando na porta ${PORT}`);
 });
-
