@@ -21,7 +21,7 @@ const TWITCH_BOT_USERNAME = 'xyzgx';
 const TWITCH_OAUTH_TOKEN = 'oauth:o731um0ljm4od6av2hp0ohoa1t8v32'; // IMPORTANTE: precisa começar com oauth:
 
 // --- CONFIGURAÇÃO DE BLOQUEIO ---
-const BOTS_TO_IGNORE = ['icarolinabot', 'icarolinaporto']; // Adicione os nomes aqui em minúsculo
+const BOTS_TO_IGNORE = ['icarolinabot', 'icarolinaporto', 'streamelements']; // Adicione os nomes aqui em minúsculo
 // ---------------------------------
 
 // ===============================
@@ -181,3 +181,4 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`Server rodando na porta ${PORT}`);
 });
+
